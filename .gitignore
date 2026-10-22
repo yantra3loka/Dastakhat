@@ -1,0 +1,82 @@
+# ---------------------------------------------------------------------------
+# Dastakhat - ignore rules
+# Secrets, private keys, certificates, generated artefacts, build output.
+# ---------------------------------------------------------------------------
+
+# --- environment / secrets -------------------------------------------------
+.env
+.env.*
+!.env.example
+*.secret
+secrets/
+
+# --- keys, certificates, tokens --------------------------------------------
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.crt
+*.cer
+*.der
+*.csr
+*.p8
+devpki/out/
+devpki/tokens/
+tokens/
+softhsm2.conf
+softhsm/
+.m2/
+
+# --- generated documents / storage -----------------------------------------
+storage/
+*.pdf
+!e2e/fixtures/*.pdf
+!docs/**/*.pdf
+backend/storage/
+backend/target/
+backend/uploads/
+
+# --- build output / dependencies -------------------------------------------
+target/
+build/
+dist/
+node_modules/
+.vite/
+*.tsbuildinfo
+.angular/
+.output/
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+blob-report/
+.playwright/
+
+# --- IDE / OS --------------------------------------------------------------
+.idea/
+*.iml
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# --- logs / temp -----------------------------------------------------------
+*.log
+logs/
+tmp/
+.temp/
+*.pid
+
+# --- python (agent only) ---------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- playwright ------------------------------------------------------------
+e2e/artifacts/

@@ -1,0 +1,1305 @@
+openapi: 3.0.3
+info:
+  title: Dastakhat API
+  version: 1.0.0
+  description: |
+    Dastakhat - mini e-signature platform (self-hosted).
+
+    **IMPORTANT / LEGAL**
+    * Signatures captured as "Electronic" are drawn or typed images. They are **not**
+      digital signatures and are **not** legally equivalent to a DSC or Aadhaar eSign.
+    * The "Aadhaar eSign" integration is a **MOCK**. It never contacts UIDAI or a real
+      eSign Service Provider, never asks for an Aadhaar number and has no legal standing.
+    * DSC signing uses a local PKCS#11 agent. Development certificates are TEST only.
+
+    **Authentication**
+    * Senders authenticate with `POST /auth/login` which sets an HttpOnly session cookie
+      and returns a CSRF token. Every state changing request must send the token in the
+      `X-CSRF-TOKEN` header (the same value is also written to the `XSRF-TOKEN` cookie).
+    * Signers never authenticate. They use a single use, expiring, high entropy token
+      (`/sign/{token}`).
+
+servers:
+  - url: /api/v1
+    description: Local development API
+
+tags:
+  - name: auth
+  - name: envelopes
+  - name: documents
+  - name: sign
+  - name: dsc
+  - name: esign
+  - name: audit
+  - name: system
+
+paths:
+  /health:
+    get:
+      tags: [system]
+      summary: Liveness probe
+      security: []
+      responses:
+        '200':
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+
+  /ready:
+    get:
+      tags: [system]
+      summary: Readiness probe (database + storage + mail)
+      security: []
+      responses:
+        '200':
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+        '503':
+          description: A dependency is not ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+
+  /auth/login:
+    post:
+      tags: [auth]
+      summary: Sender login
+      description: Sets the HttpOnly session cookie and returns the CSRF token.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Authenticated
+          headers:
+            Set-Cookie:
+              description: 'JSESSIONID / DASTAKHAT_SESSION (HttpOnly, SameSite=Lax, Secure in production)'
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Too many attempts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /auth/logout:
+    post:
+      tags: [auth]
+      summary: Sender logout
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '204':
+          description: Session ended
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /auth/me:
+    get:
+      tags: [auth]
+      summary: Current sender
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Current sender
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /envelopes:
+    get:
+      tags: [envelopes]
+      summary: List the sender's envelopes
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: status
+          in: query
+          description: Filter by envelope status. Omit for all.
+          schema:
+            type: string
+            enum: [draft, sent, completed, declined, voided, expired]
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
+        - name: size
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+      responses:
+        '200':
+          description: Page of envelopes
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvelopePage'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    post:
+      tags: [envelopes]
+      summary: Create a draft envelope from an uploaded PDF
+      description: |
+        Multipart upload. The file is validated server side (magic bytes, size, page
+        count, encryption, active content) and stored under a random storage key.
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: PDF document, max 10 MB, max 50 pages
+                title:
+                  type: string
+                  maxLength: 200
+                  description: Defaults to the uploaded file name (sanitised)
+      responses:
+        '201':
+          description: Draft created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope'
+        '400':
+          description: Validation error (missing file)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: File larger than 10 MB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '415':
+          description: Not a PDF (magic bytes mismatch)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Encrypted PDF, too many pages or active content detected
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /envelopes/stats:
+    get:
+      tags: [envelopes]
+      summary: Aggregated statistics for the dashboard
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Counts per status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvelopeStats'
+
+  /envelopes/{envelopeId}:
+    parameters:
+      - $ref: '#/components/parameters/EnvelopeId'
+    get:
+      tags: [envelopes]
+      summary: Envelope with recipients, fields and signatures
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Envelope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope'
+        '404':
+          description: Not found or not owned by the caller
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    patch:
+      tags: [envelopes]
+      summary: Update title / routing / expiry
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnvelopeUpdateRequest'
+      responses:
+        '200':
+          description: Updated envelope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope'
+        '404':
+          description: Not found or not owned by the caller
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Only drafts are editable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /envelopes/{envelopeId}/recipients:
+    parameters:
+      - $ref: '#/components/parameters/EnvelopeId'
+    put:
+      tags: [envelopes]
+      summary: Replace the recipient list
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecipientsRequest'
+      responses:
+        '200':
+          description: Envelope with the new recipient list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope'
+        '404':
+          description: Not found or not owned by the caller
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Only drafts are editable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Invalid recipient (bad e-mail, duplicate, bad method)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /envelopes/{envelopeId}/fields:
+    parameters:
+      - $ref: '#/components/parameters/EnvelopeId'
+    put:
+      tags: [envelopes]
+      summary: Replace the field list
+      description: Coordinates are fractions (0..1) of the page, top-left origin.
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FieldsRequest'
+      responses:
+        '200':
+          description: Envelope with the new field list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope'
+        '404':
+          description: Not found or not owned by the caller
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Only drafts are editable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Field outside the page bounds or referencing an unknown recipient
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /envelopes/{envelopeId}/documents/{kind}:
+    parameters:
+      - $ref: '#/components/parameters/EnvelopeId'
+      - name: kind
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [original, working, final]
+    get:
+      tags: [documents]
+      summary: Download a stored document
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: PDF stream
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Not found, not owned by the caller, or the document does not exist yet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /envelopes/{envelopeId}/send:
+    parameters:
+      - $ref: '#/components/parameters/EnvelopeId'
+    post:
+      tags: [envelopes]
+      summary: Send the envelope to the recipients
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '202':
+          description: Envelope sent, signing links e-mailed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope'
+        '404':
+          description: Not found or not owned by the caller
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Not a draft, or a recipient has no signature field
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Envelope is not valid (e.g. no recipients)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /envelopes/{envelopeId}/void:
+    parameters:
+      - $ref: '#/components/parameters/EnvelopeId'
+    post:
+      tags: [envelopes]
+      summary: Void the envelope and invalidate every signing link
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '200':
+          description: Envelope voided
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope'
+        '404':
+          description: Not found or not owned by the caller
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Envelope already completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /envelopes/{envelopeId}/audit:
+    parameters:
+      - $ref: '#/components/parameters/EnvelopeId'
+    get:
+      tags: [audit]
+      summary: Audit events of the envelope (append only)
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Ordered audit events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AuditEvent'
+        '404':
+          description: Not found or not owned by the caller
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /envelopes/{envelopeId}/audit/verify:
+    parameters:
+      - $ref: '#/components/parameters/EnvelopeId'
+    get:
+      tags: [audit]
+      summary: Recompute the audit hash chain
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Chain verification result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditVerification'
+        '404':
+          description: Not found or not owned by the caller
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /sign/{token}:
+    parameters:
+      - $ref: '#/components/parameters/SignerToken'
+    get:
+      tags: [sign]
+      summary: Signer view model for the token
+      description: |
+        Returns 404 for an unknown token so that token existence is never revealed,
+        and 410 when the link is expired, already used or the envelope was voided.
+        425 is returned when it is not this recipient's turn yet.
+      security: []
+      responses:
+        '200':
+          description: Signer view model
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignerView'
+        '404':
+          description: Unknown token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '410':
+          description: Expired, used or voided link
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '425':
+          description: Not your turn yet (sequential routing)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /sign/{token}/document:
+    parameters:
+      - $ref: '#/components/parameters/SignerToken'
+    get:
+      tags: [sign]
+      summary: The document this signer is allowed to see
+      security: []
+      responses:
+        '200':
+          description: PDF stream
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Unknown token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '410':
+          description: Expired, used or voided link
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '425':
+          description: Not your turn yet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /sign/{token}/consent:
+    parameters:
+      - $ref: '#/components/parameters/SignerToken'
+    post:
+      tags: [sign]
+      summary: Record the signer's consent to sign electronically
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [consent]
+              properties:
+                consent:
+                  type: boolean
+                  description: Must be true.
+                consentText:
+                  type: string
+                  description: Exact wording the signer agreed to.
+      responses:
+        '204':
+          description: Consent recorded
+        '400':
+          description: Consent was not given
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Unknown token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '410':
+          description: Expired, used or voided link
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '425':
+          description: Not your turn yet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /sign/{token}/complete:
+    parameters:
+      - $ref: '#/components/parameters/SignerToken'
+    post:
+      tags: [sign]
+      summary: Submit the field values and signature images
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompleteRequest'
+      responses:
+        '200':
+          description: Signature recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompleteResponse'
+        '400':
+          description: Consent missing or malformed payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Unknown token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '410':
+          description: Expired, used or voided link
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: A required field is missing or a signature image is invalid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '425':
+          description: Not your turn yet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /sign/{token}/decline:
+    parameters:
+      - $ref: '#/components/parameters/SignerToken'
+    post:
+      tags: [sign]
+      summary: Decline to sign
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  minLength: 1
+                  maxLength: 500
+      responses:
+        '200':
+          description: Envelope declined
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope'
+        '404':
+          description: Unknown token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '410':
+          description: Expired, used or voided link
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '425':
+          description: Not your turn yet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /sign/{token}/dsc/prepare:
+    parameters:
+      - $ref: '#/components/parameters/SignerToken'
+    post:
+      tags: [dsc]
+      summary: Reserve the PDF signature and return the bytes the token must sign
+      description: |
+        Stage 2. The signer certificate is validated (chain to a trusted root, validity
+        window, key usage) before anything is prepared.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [certificatePem]
+              properties:
+                certificatePem:
+                  type: string
+                  description: PEM encoded certificate chosen on the token
+      responses:
+        '200':
+          description: Signing session created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DscPrepareResponse'
+        '404':
+          description: Unknown token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '410':
+          description: Expired, used or voided link
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Certificate rejected (expired, untrusted, wrong key usage)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /sign/{token}/dsc/finish:
+    parameters:
+      - $ref: '#/components/parameters/SignerToken'
+    post:
+      tags: [dsc]
+      summary: Embed the token signature and validate the result
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sessionId, signatureBase64]
+              properties:
+                sessionId:
+                  type: string
+                  format: uuid
+                signatureBase64:
+                  type: string
+                  description: Base64 of the raw token signature over the signed attributes
+      responses:
+        '200':
+          description: Signature embedded and verified
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DscFinishResponse'
+        '404':
+          description: Unknown token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '410':
+          description: Expired, used or voided link or expired signing session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: The signature does not verify or the certificate does not match
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /sign/{token}/esign/start:
+    parameters:
+      - $ref: '#/components/parameters/SignerToken'
+    post:
+      tags: [esign]
+      summary: Build the signed MOCK eSign request
+      description: 'MOCK ONLY - never contacts UIDAI or a real ESP.'
+      security: []
+      responses:
+        '200':
+          description: MOCK eSign request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EsignStartResponse'
+        '404':
+          description: Unknown token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '410':
+          description: Expired, used or voided link
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '425':
+          description: Not your turn yet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /esign/callback:
+    post:
+      tags: [esign]
+      summary: MOCK eSign provider callback
+      description: 'MOCK ONLY. Verifies the XML signature, the transaction id and the document hash.'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/xml:
+            schema:
+              type: string
+          application/json:
+            schema:
+              type: object
+              required: [responseXml]
+              properties:
+                responseXml:
+                  type: string
+      responses:
+        '200':
+          description: MOCK eSign signature embedded and verified
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EsignCallbackResponse'
+        '400':
+          description: Bad XML signature, transaction mismatch or replay
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: DASTAKHAT_SESSION
+
+  parameters:
+    EnvelopeId:
+      name: envelopeId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    SignerToken:
+      name: token
+      in: path
+      required: true
+      description: High entropy single use signing token
+      schema:
+        type: string
+        minLength: 32
+        maxLength: 128
+    CsrfToken:
+      name: X-CSRF-TOKEN
+      in: header
+      required: true
+      description: CSRF token returned by /auth/login (or read from the XSRF-TOKEN cookie).
+      schema:
+        type: string
+
+  schemas:
+    Error:
+      type: object
+      required: [status, error, message]
+      properties:
+        status: { type: integer, example: 422 }
+        error: { type: string, example: Unprocessable Entity }
+        message: { type: string, example: The PDF contains JavaScript actions, which are not allowed.' }
+        fieldErrors:
+          type: array
+          items:
+            type: object
+            properties:
+              field: { type: string }
+              message: { type: string }
+        timestamp: { type: string, format: date-time }
+
+    Health:
+      type: object
+      properties:
+        status: { type: string, example: UP }
+        service: { type: string, example: dastakhat-backend }
+        version: { type: string }
+        time: { type: string, format: date-time }
+
+    Readiness:
+      type: object
+      properties:
+        status: { type: string, example: UP }
+        checks:
+          type: object
+          additionalProperties:
+            type: string
+
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        name: { type: string }
+        role: { type: string, enum: [sender] }
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, format: password }
+
+    LoginResponse:
+      type: object
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+        csrfToken:
+          type: string
+          description: Send this value in the X-CSRF-TOKEN header.
+
+    EnvelopePage:
+      type: object
+      properties:
+        content:
+          type: array
+          items:
+            $ref: '#/components/schemas/Envelope'
+        page: { type: integer }
+        size: { type: integer }
+        totalElements: { type: integer }
+        totalPages: { type: integer }
+
+    Envelope:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        status:
+          type: string
+          enum: [draft, sent, completed, declined, voided, expired]
+        routing:
+          type: string
+          enum: [sequential, parallel]
+        expiresAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time, nullable: true }
+        lastActivityAt: { type: string, format: date-time, nullable: true }
+        signedCount: { type: integer }
+        recipientCount: { type: integer }
+        originalSha256: { type: string, nullable: true }
+        finalSha256: { type: string, nullable: true }
+        preSealSha256: { type: string, nullable: true }
+        pages: { type: integer }
+        document:
+          $ref: '#/components/schemas/DocumentInfo'
+        recipients:
+          type: array
+          items:
+            $ref: '#/components/schemas/Recipient'
+        fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/Field'
+        finalAvailable:
+          type: boolean
+
+    DocumentInfo:
+      type: object
+      properties:
+        filename: { type: string }
+        sha256: { type: string }
+        pages: { type: integer }
+        sizeBytes: { type: integer }
+
+    EnvelopeUpdateRequest:
+      type: object
+      properties:
+        title: { type: string, maxLength: 200 }
+        routing: { type: string, enum: [sequential, parallel] }
+        expiresInDays: { type: integer, minimum: 1, maximum: 90 }
+        status: { type: string, enum: [draft, sent, voided] }
+
+    RecipientsRequest:
+      type: object
+      required: [recipients]
+      properties:
+        recipients:
+          type: array
+          items:
+            $ref: '#/components/schemas/RecipientInput'
+
+    RecipientInput:
+      type: object
+      required: [name, email, method]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        email: { type: string, format: email }
+        method:
+          type: string
+          enum: [electronic, dsc, esign_mock]
+        routingOrder: { type: integer, minimum: 1 }
+
+    Recipient:
+      allOf:
+        - $ref: '#/components/schemas/RecipientInput'
+        - type: object
+          properties:
+            id: { type: string, format: uuid }
+            status:
+              type: string
+              enum: [pending, notified, viewed, signed, declined]
+            signedAt: { type: string, format: date-time, nullable: true }
+            viewedAt: { type: string, format: date-time, nullable: true }
+            notifiedAt: { type: string, format: date-time, nullable: true }
+            tokenExpiresAt: { type: string, format: date-time, nullable: true }
+            signature:
+              $ref: '#/components/schemas/SignatureInfo'
+
+    SignatureInfo:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [drawn, typed, dsc, esign_mock] }
+        signerCertSha256: { type: string, nullable: true }
+        cmsSha256: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    FieldsRequest:
+      type: object
+      required: [fields]
+      properties:
+        fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/FieldInput'
+
+    FieldInput:
+      type: object
+      required: [recipientId, type, page, x, y, w, h]
+      properties:
+        recipientId: { type: string, format: uuid }
+        type:
+          type: string
+          enum: [signature, initials, date, text, name]
+        page: { type: integer, minimum: 1 }
+        x: { type: number, minimum: 0, maximum: 1 }
+        y: { type: number, minimum: 0, maximum: 1 }
+        w: { type: number, exclusiveMinimum: 0, maximum: 1 }
+        h: { type: number, exclusiveMinimum: 0, maximum: 1 }
+        required: { type: boolean, default: true }
+        label: { type: string, maxLength: 120 }
+
+    Field:
+      allOf:
+        - $ref: '#/components/schemas/FieldInput'
+        - type: object
+          properties:
+            id: { type: string, format: uuid }
+            value: { type: string, nullable: true }
+
+    SignerView:
+      type: object
+      properties:
+        envelopeId: { type: string, format: uuid }
+        envelopeTitle: { type: string }
+        senderName: { type: string }
+        senderEmail: { type: string }
+        recipientName: { type: string }
+        recipientEmail: { type: string }
+        method: { type: string, enum: [electronic, dsc, esign_mock] }
+        expiresAt: { type: string, format: date-time }
+        consentRecorded: { type: boolean }
+        document:
+          $ref: '#/components/schemas/DocumentInfo'
+        fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/Field'
+        documentUrl: { type: string }
+        legalNotice: { type: string }
+
+    CompleteRequest:
+      type: object
+      required: [consent, fields]
+      properties:
+        consent:
+          type: boolean
+          description: Must be true - consent is re-asserted on submit.
+        fields:
+          type: array
+          description: Values for the fields of this recipient.
+          items:
+            type: object
+            required: [fieldId]
+            properties:
+              fieldId: { type: string, format: uuid }
+              value: { type: string, maxLength: 2000 }
+              signatureImageBase64:
+                type: string
+                description: PNG data URL of a drawn or typed signature (max 200 KB).
+
+    CompleteResponse:
+      type: object
+      properties:
+        status: { type: string, example: signed }
+        recipientId: { type: string, format: uuid }
+        signedAt: { type: string, format: date-time }
+        envelopeStatus: { type: string }
+        nextRecipientsNotified: { type: integer }
+
+    DscPrepareResponse:
+      type: object
+      properties:
+        sessionId: { type: string, format: uuid }
+        toBeSignedBase64:
+          type: string
+          description: DER encoded CMS signed attributes; the token signs exactly these bytes.
+        documentSha256: { type: string }
+        documentName: { type: string }
+        signatureAlgorithm: { type: string, example: SHA256withRSA }
+        expiresAt: { type: string, format: date-time }
+
+    DscFinishResponse:
+      type: object
+      properties:
+        status: { type: string, example: signed }
+        signatureSha256: { type: string }
+        validated: { type: boolean }
+        trusted: { type: boolean }
+        envelopeStatus: { type: string }
+
+    EsignStartResponse:
+      type: object
+      properties:
+        txn: { type: string }
+        espUrl: { type: string, description: MOCK provider URL to post the request to }
+        requestXml: { type: string }
+        mock: { type: boolean, example: true }
+        banner: { type: string, example: 'MOCK - Aadhaar eSign simulation. Not a real authentication.' }
+
+    EsignCallbackResponse:
+      type: object
+      properties:
+        status: { type: string, example: signed }
+        validated: { type: boolean }
+        envelopeStatus: { type: string }
+
+    AuditEvent:
+      type: object
+      properties:
+        seq: { type: integer }
+        type:
+          type: string
+          enum:
+            [envelope_created, document_uploaded, recipients_updated, fields_updated, envelope_sent,
+             document_viewed, consent_recorded, signed, declined, sealed, downloaded, voided,
+             dsc_signed, esign_signed]
+        actor: { type: string }
+        ip: { type: string, nullable: true }
+        userAgent: { type: string, nullable: true }
+        docSha256: { type: string, nullable: true }
+        payload: { type: object, additionalProperties: true }
+        at: { type: string, format: date-time }
+        prevHash: { type: string }
+        hash: { type: string }
+
+    AuditVerification:
+      type: object
+      properties:
+        intact: { type: boolean }
+        brokenAtSeq: { type: integer, nullable: true }
+        eventCount: { type: integer }
+        headHash: { type: string }
+        checkedAt: { type: string, format: date-time }
+
+    EnvelopeStats:
+      type: object
+      properties:
+        total: { type: integer }
+        draft: { type: integer }
+        waiting: { type: integer }
+        completed: { type: integer }
+        declined: { type: integer }
+        voided: { type: integer }
+        expired: { type: integer }
+        actionNeeded:
+          type: integer
+          description: Envelopes that are waiting for the sender to act on.
+        awaitingOthers:
+          type: integer
+          description: Envelopes that are waiting for a signer.
+
+  /download/{token}:
+    get:
+      tags: [documents]
+      summary: Download the final document with an expiring download token
+      description: The token is sent with the completion notification.
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: PDF stream
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Unknown token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '410':
+          description: The token expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'

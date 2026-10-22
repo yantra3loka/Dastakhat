@@ -1,0 +1,139 @@
+spring:
+  application:
+    name: dastakhat-backend
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:dastakhat}
+    username: ${DB_USER:dastakhat}
+    password: ${DB_PASSWORD:change-me-local-dev}
+    hikari:
+      maximum-pool-size: 10
+      connection-timeout: 10000
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+        type:
+          preferred_instant_jdbc_type: TIMESTAMP_UTC
+        format_sql: false
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+
+  mail:
+    host: ${MAIL_HOST:localhost}
+    port: ${MAIL_PORT:1025}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: false
+          starttls:
+            enable: false
+    test-connection: false
+
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 12MB
+
+  session:
+    timeout: ${DASTAKHAT_SESSION_TIMEOUT_MINUTES:120}m
+
+server:
+  port: ${BACKEND_PORT:8080}
+  servlet:
+    session:
+      cookie:
+        name: DASTAKHAT_SESSION
+        http-only: true
+        secure: ${DASTAKHAT_COOKIE_SECURE:false}
+        same-site: lax
+  error:
+    include-message: never
+    include-stacktrace: never
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: alpha
+  api-docs:
+    path: /v3/api-docs
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+
+dastakhat:
+  storage-dir: ${DASTAKHAT_STORAGE_DIR:./storage}
+  cors-origins: ${DASTAKHAT_CORS_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
+  public-base-url: ${DASTAKHAT_PUBLIC_BASE_URL:http://localhost:5173}
+  default-link-expiry-days: ${DASTAKHAT_DEFAULT_LINK_EXPIRY_DAYS:7}
+  max-upload-bytes: 10485760
+  max-pages: 50
+  max-signature-bytes: 204800
+  session-timeout: ${DASTAKHAT_SESSION_TIMEOUT_MINUTES:120}m
+  cookie-secure: ${DASTAKHAT_COOKIE_SECURE:false}
+  seal-keystore: ${DASTAKHAT_SEAL_KEYSTORE:../devpki/out/platform-seal.p12}
+  seal-keystore-password: ${DASTAKHAT_SEAL_KEYSTORE_PASSWORD:changeit}
+  seal-certificate: ${DASTAKHAT_SEAL_CERT:../devpki/out/platform-seal-cert.pem}
+  trust-roots: ${DASTAKHAT_TRUST_ROOTS:../devpki/out/test-root-ca.pem}
+  mock-esp-base-url: ${MOCK_ESP_BASE_URL:http://localhost:9100}
+  esign-callback-url: ${DASTAKHAT_ESIGN_CALLBACK_URL:http://localhost:8080/api/v1/esign/callback}
+  dsc-agent-base-url: ${DSC_AGENT_BASE_URL:https://127.0.0.1:51515}
+  mock-esp-test-otp: ${MOCK_ESP_TEST_OTP:123456}
+  mail-from-address: ${MAIL_FROM_ADDRESS:no-reply@dastakhat.local}
+  mail-from-name: ${MAIL_FROM_NAME:Dastakhat}
+  seed:
+    enabled: ${DASTAKHAT_SEED_ENABLED:true}
+    email: ${DASTAKHAT_SEED_EMAIL:sender@example.test}
+    name: ${DASTAKHAT_SEED_NAME:Dastakhat Sender}
+    password: ${DASTAKHAT_SEED_PASSWORD:ChangeMe!123}
+
+logging:
+  level:
+    root: INFO
+    com.dastakhat: INFO
+    org.hibernate.SQL: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{traceId:-}] %logger{36} - %msg%n"
+
+---
+# Profile for the automated tests: an in memory database, no mail, local storage.
+spring:
+  config:
+    activate:
+      on-profile: test
+  datasource:
+    url: jdbc:h2:mem:dastakhat;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  jpa:
+    hibernate:
+      ddl-auto: none
+  flyway:
+    enabled: false
+  mail:
+    host: localhost
+    port: 3025
+
+dastakhat:
+  storage-dir: ./target/test-storage
+  seed:
+    enabled: true
+    email: sender@example.test
+    password: ChangeMe!123
