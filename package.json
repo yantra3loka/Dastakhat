@@ -11,6 +11,8 @@
     "build:frontend": "npm --prefix frontend run build",
     "test:frontend": "npm --prefix frontend run test",
     "test:e2e": "playwright test --config e2e/playwright.config.ts",
+    "test:e2e:headed": "playwright test --config e2e/playwright.config.ts --headed",
+    "test:e2e:report": "playwright show-report e2e/artifacts/html-report",
     "install:e2e": "playwright install --with-deps chromium"
   },
   "devDependencies": {

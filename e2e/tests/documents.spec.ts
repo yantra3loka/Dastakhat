@@ -1,16 +1,9 @@
 import { expect, test } from '@playwright/test'
+import { login } from './support'
 
 /**
  * The document list of the sender.
  */
-
-async function login(page: import('@playwright/test').Page): Promise<void> {
-  await page.goto('/login')
-  await page.getByLabel('E-mail address').fill('sender@example.test')
-  await page.getByLabel('Password').fill('ChangeMe!123')
-  await page.getByRole('button', { name: 'Sign in' }).click()
-  await expect(page).toHaveURL(/\/dashboard/)
-}
 
 test.beforeEach(async ({ page }) => {
   await login(page)

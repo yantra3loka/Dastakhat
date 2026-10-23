@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import type { APIRequestContext, Page } from '@playwright/test'
+import { latestSigningLink, login } from './support'
 
 /**
  * The complete signing workflow of one envelope.
@@ -9,29 +9,7 @@ import type { APIRequestContext, Page } from '@playwright/test'
  * Mailpit, signs the document and finally checks the sealed document and the audit chain.
  */
 
-const MAILPIT = process.env['MAILPIT_API'] ?? 'http://localhost:8025/api/v1'
 const FIXTURE = 'e2e/fixtures/offer-letter.pdf'
-
-/** The signing link of the most recent mail to the given address. */
-async function latestSigningLink(request: APIRequestContext, email: string): Promise<string> {
-  const list = await (await request.get(`${MAILPIT}/messages?limit=50`)).json()
-  const message = list.messages.find((entry: { To: { Address: string }[] }) =>
-    entry.To.some((to) => to.Address.toLowerCase() === email.toLowerCase()),
-  )
-  expect(message, `no mail was sent to ${email}`).toBeTruthy()
-  const full = await (await request.get(`${MAILPIT}/message/${message.ID}`)).json()
-  const match = full.Text.match(/https?:\/\/[^\s"<>]+\/sign\/([A-Za-z0-9_-]+)/)
-  expect(match, 'the mail does not contain a signing link').toBeTruthy()
-  return match![0]
-}
-
-async function login(page: Page): Promise<void> {
-  await page.goto('/login')
-  await page.getByLabel('E-mail address').fill('sender@example.test')
-  await page.getByLabel('Password').fill('ChangeMe!123')
-  await page.getByRole('button', { name: 'Sign in' }).click()
-  await expect(page).toHaveURL(/\/dashboard/)
-}
 
 test.describe.configure({ mode: 'serial' })
 
@@ -98,14 +76,14 @@ test('signs a document from the upload to the sealed PDF', async ({ page, reques
   await page.getByText(`Offer letter ${stamp}`).click()
   await expect(page.getByText(/Completed/i).first()).toBeVisible()
 
-  // 10. The audit chain verifies.
+  // 10. The audit chain verifies. The audit page does not verify on its own,
+  //     the "Verify chain" button has to be pressed explicitly.
   await page.goto('/documents')
   await page.getByText(`Offer letter ${stamp}`).click()
-  const auditLink = page.getByRole('link', { name: /Audit/i }).first()
-  if (await auditLink.count()) {
-    await auditLink.click()
-    await expect(page.getByText(/Chain intact|intact/i).first()).toBeVisible()
-  }
+  await page.getByRole('link', { name: 'Audit trail' }).click()
+  await expect(page).toHaveURL(/\/documents\/[0-9a-f-]+\/audit/)
+  await page.getByRole('button', { name: /Verify chain/i }).click()
+  await expect(page.getByRole('alert').filter({ hasText: 'Chain intact' })).toBeVisible()
 })
 
 test('the signing link cannot be used twice', async ({ page, request }) => {

@@ -76,6 +76,32 @@ class PdfValidatorTest {
     }
 
     @Test
+    void aPdfWithAnEmbeddedAttachmentIsRejected() {
+        UnprocessableException exception = assertThrows(UnprocessableException.class,
+                () -> validator.validate(TestDocuments.embeddedFilePdf()));
+        String message = exception.getMessage().toLowerCase();
+        assertTrue(message.contains("active content"), message);
+        assertTrue(message.contains("embedded-attachment"), message);
+        assertTrue(message.contains("embedded-file"), message);
+        assertTrue(message.contains("associated-files"), message);
+        assertTrue(message.contains("secret-plan.txt"), "the message names the attachment: " + message);
+    }
+
+    @Test
+    void anOrdinaryDocumentWithAResourceNamedEfIsAccepted() {
+        PdfValidator.Inspection inspection = validator.validate(TestDocuments.resourceNamedEfPdf());
+        assertEquals(1, inspection.pages());
+        assertEquals(64, inspection.sha256().length());
+    }
+
+    @Test
+    void aTextOnlyPdfWithoutActiveContentHasNoFindings() {
+        PdfValidator.Inspection inspection = validator.validate(TestDocuments.validOnePagePdf());
+        assertEquals(1, inspection.pages());
+        assertTrue(inspection.findings().isEmpty());
+    }
+
+    @Test
     void anEmptyFileIsRejected() {
         assertThrows(UnprocessableException.class, () -> validator.validate(new byte[0]));
     }
