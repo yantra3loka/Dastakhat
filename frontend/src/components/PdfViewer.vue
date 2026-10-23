@@ -35,9 +35,12 @@ const errorMessage = ref<string | null>(null)
 const pageCount = ref(0)
 
 const canvases = new Map<number, HTMLCanvasElement>()
+/** The render tasks that are currently running, so that they can be cancelled. */
+const renderTasks = new Map<number, { cancel: () => void }>()
 let documentProxy: PDFDocumentProxy | null = null
 let renderToken = 0
 let resizeObserver: ResizeObserver | null = null
+let lastRenderedWidth = 0
 
 function setCanvasRef(page: number, element: Element | null): void {
   if (element instanceof HTMLCanvasElement) canvases.set(page, element)
@@ -94,6 +97,13 @@ async function renderPage(page: number, token: number): Promise<void> {
   if (!documentProxy) return
   const canvas = canvases.get(page)
   if (!canvas) return
+  // A render that is still running has to be cancelled, otherwise pdf.js refuses to render
+  // the same canvas twice ("Cannot use the same canvas during multiple render() operations").
+  const pending = renderTasks.get(page)
+  if (pending) {
+    pending.cancel()
+    renderTasks.delete(page)
+  }
   try {
     const pdfPage = await documentProxy.getPage(page)
     if (token !== renderToken) return
@@ -106,9 +116,17 @@ async function renderPage(page: number, token: number): Promise<void> {
     canvas.height = Math.floor(viewport.height)
     canvas.style.width = `${Math.floor(viewport.width)}px`
     canvas.style.height = `${Math.floor(viewport.height)}px`
-    await pdfPage.render({ canvasContext: context, viewport }).promise
+    const task = pdfPage.render({ canvasContext: context, viewport })
+    renderTasks.set(page, task)
+    try {
+      await task.promise
+    } finally {
+      if (renderTasks.get(page) === task) renderTasks.delete(page)
+    }
   } catch (cause) {
     if (token !== renderToken) return
+    const name = cause instanceof Error ? cause.name : ''
+    if (name === 'RenderingCancelledException') return
     errorMessage.value = cause instanceof Error ? cause.message : 'A page could not be rendered.'
   }
 }
@@ -165,8 +183,14 @@ watch(
 
 onMounted(async () => {
   await load()
+  lastRenderedWidth = containerWidth()
   if (typeof ResizeObserver !== 'undefined' && container.value) {
     resizeObserver = new ResizeObserver(() => {
+      const width = containerWidth()
+      // Only a real change of the width needs a new render - otherwise the observer would
+      // fight with the render that is already running.
+      if (Math.abs(width - lastRenderedWidth) < 2) return
+      lastRenderedWidth = width
       void rerender()
     })
     resizeObserver.observe(container.value)

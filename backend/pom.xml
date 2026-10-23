@@ -141,6 +141,11 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <!-- The plain jar stays the main artifact so that the MOCK eSign service
+                         can reuse the shared PKI helpers. -->
+                    <classifier>exec</classifier>
+                </configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -170,7 +175,10 @@
                 <artifactId>exec-maven-plugin</artifactId>
                 <version>3.5.0</version>
                 <configuration>
-                    <mainClass>com.dastakhat.devpki.DevPkiTool</mainClass>
+                    <!-- The main class is chosen on the command line, for example:
+                         mvn -q exec:java -Dexec.mainClass=com.dastakhat.devpki.DevPkiTool
+                             -Dexec.args="all ../devpki/out" -->
+                    <includePluginDependencies>false</includePluginDependencies>
                 </configuration>
             </plugin>
         </plugins>

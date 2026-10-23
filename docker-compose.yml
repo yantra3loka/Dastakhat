@@ -1,0 +1,126 @@
+# ---------------------------------------------------------------------------
+# Dastakhat - local development stack.
+#
+#   docker compose up -d db mailpit mock-esp
+#   docker compose --profile app up -d backend frontend
+#
+# The DSC signing agent is NOT part of this file: it needs access to a local
+# USB token and therefore runs on the host (see agent/README.md).
+# ---------------------------------------------------------------------------
+
+name: dastakhat
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: dastakhat-db
+    environment:
+      POSTGRES_DB: ${DB_NAME:-dastakhat}
+      POSTGRES_USER: ${DB_USER:-dastakhat}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-change-me-local-dev}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-dastakhat} -d ${DB_NAME:-dastakhat}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: dastakhat-mailpit
+    ports:
+      - "127.0.0.1:1025:1025"   # SMTP
+      - "127.0.0.1:8025:8025"   # web UI + REST API
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8025/readyz"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mock-esp:
+    build:
+      context: .
+      dockerfile: mock-esp/Dockerfile
+    container_name: dastakhat-mock-esp
+    ports:
+      - "127.0.0.1:9100:9100"
+    environment:
+      MOCK_ESP_KEYSTORE: /pki/mock-esp.p12
+      MOCK_ESP_KEYSTORE_PASSWORD: ${MOCK_ESP_KEYSTORE_PASSWORD:-changeit}
+      MOCK_ESP_CA_KEYSTORE: /pki/mock-ca.p12
+      MOCK_ESP_CA_KEYSTORE_PASSWORD: ${MOCK_ESP_CA_KEYSTORE_PASSWORD:-changeit}
+      MOCK_ESP_CA: /pki/mock-ca.pem
+      MOCK_ESP_TEST_OTP: ${MOCK_ESP_TEST_OTP:-123456}
+      MOCK_ESP_ALLOWED_ORIGINS: ${MOCK_ESP_ALLOWED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+    volumes:
+      - ./devpki/out:/pki:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9100/esp/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: dastakhat-backend
+    profiles: ["app"]
+    depends_on:
+      db:
+        condition: service_healthy
+      mailpit:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-dastakhat}
+      DB_USER: ${DB_USER:-dastakhat}
+      DB_PASSWORD: ${DB_PASSWORD:-change-me-local-dev}
+      MAIL_HOST: mailpit
+      MAIL_PORT: 1025
+      DASTAKHAT_STORAGE_DIR: /data/storage
+      DASTAKHAT_PUBLIC_BASE_URL: ${DASTAKHAT_PUBLIC_BASE_URL:-http://localhost:5173}
+      DASTAKHAT_CORS_ORIGINS: ${DASTAKHAT_CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+      DASTAKHAT_SEAL_KEYSTORE: /pki/platform-seal.p12
+      DASTAKHAT_SEAL_KEYSTORE_PASSWORD: ${DASTAKHAT_SEAL_KEYSTORE_PASSWORD:-changeit}
+      DASTAKHAT_SEAL_CERT: /pki/platform-seal-cert.pem
+      DASTAKHAT_TRUST_ROOTS: /pki/test-root-ca.pem
+      MOCK_ESP_BASE_URL: http://mock-esp:9100
+      DASTAKHAT_ESIGN_CALLBACK_URL: http://backend:8080/api/v1/esign/callback
+      DSC_AGENT_BASE_URL: ${DSC_AGENT_BASE_URL:-https://127.0.0.1:51515}
+      DASTAKHAT_SEED_EMAIL: ${DASTAKHAT_SEED_EMAIL:-sender@example.test}
+      DASTAKHAT_SEED_PASSWORD: ${DASTAKHAT_SEED_PASSWORD:-ChangeMe!123}
+    volumes:
+      - ./devpki/out:/pki:ro
+      - dastakhat-storage:/data/storage
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/api/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: dastakhat-frontend
+    profiles: ["app"]
+    depends_on:
+      - backend
+    ports:
+      - "127.0.0.1:5173:5173"
+    environment:
+      VITE_API_BASE_URL: /api/v1
+
+volumes:
+  pgdata:
+  dastakhat-storage:

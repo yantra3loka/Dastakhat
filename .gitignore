@@ -33,6 +33,9 @@ softhsm/
 storage/
 *.pdf
 !e2e/fixtures/*.pdf
+# produced by the demonstration, never a fixture of a test
+e2e/fixtures/tampered.pdf
+e2e/fixtures/dsc-final.pdf
 !docs/**/*.pdf
 backend/storage/
 backend/target/
@@ -64,6 +67,7 @@ Thumbs.db
 
 # --- logs / temp -----------------------------------------------------------
 *.log
+*.err
 logs/
 tmp/
 .temp/

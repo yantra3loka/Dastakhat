@@ -1,0 +1,19 @@
+{
+  "name": "dastakhat",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Dastakhat - a self hosted mini e-signature platform (backend, frontend, e2e)",
+  "workspaces": [
+    "frontend"
+  ],
+  "scripts": {
+    "dev:frontend": "npm --prefix frontend run dev",
+    "build:frontend": "npm --prefix frontend run build",
+    "test:frontend": "npm --prefix frontend run test",
+    "test:e2e": "playwright test --config e2e/playwright.config.ts",
+    "install:e2e": "playwright install --with-deps chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.1"
+  }
+}

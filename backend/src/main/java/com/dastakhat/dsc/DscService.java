@@ -103,7 +103,8 @@ public class DscService {
     /** Prepares the signature and returns the bytes the token has to sign. */
     @Transactional
     public SignerDtos.DscPrepareResponse prepare(String rawToken, String certificatePem,
-                                                  String ip, String userAgent) throws IOException {        Recipient recipient = signing.resolve(rawToken);
+                                                  String ip, String userAgent) throws IOException {
+        Recipient recipient = signing.resolve(rawToken);
         Envelope envelope = recipient.getEnvelope();
         if (recipient.getMethod() != SigningMethod.DSC) {
             throw new ConflictException("This recipient does not sign with a DSC.");

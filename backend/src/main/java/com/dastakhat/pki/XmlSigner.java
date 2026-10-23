@@ -65,7 +65,10 @@ public final class XmlSigner {
 
         DOMSignContext context = new DOMSignContext(privateKey, element);
         context.setDefaultNamespacePrefix(null);
-        context.setIdAttributeNS(element, null, "Id");
+        if (element.hasAttribute("Id")) {
+            // Only an element that really carries an id may be registered as one.
+            context.setIdAttributeNS(element, null, "Id");
+        }
 
         XMLSignature signature = factory.newXMLSignature(signedInfo, keyInfo);
         signature.sign(context);
@@ -91,9 +94,17 @@ public final class XmlSigner {
         if (root == null) {
             return false;
         }
+        // The unmarshaller needs the <Signature> element itself - not the signed root.
+        NodeList signatureNodes = root.getElementsByTagNameNS(XMLSignature.XMLNS, "Signature");
+        if (signatureNodes.getLength() == 0) {
+            return false;
+        }
+        Element signatureElement = (Element) signatureNodes.item(0);
         XMLSignatureFactory signatureFactory = XMLSignatureFactory.getInstance("DOM");
-        DOMValidateContext context = new DOMValidateContext(trustedKey, root);
-        context.setIdAttributeNS(root, null, "Id");
+        DOMValidateContext context = new DOMValidateContext(trustedKey, signatureElement);
+        if (signatureElement.hasAttribute("Id")) {
+            context.setIdAttributeNS(signatureElement, null, "Id");
+        }
         XMLSignature signature = signatureFactory.unmarshalXMLSignature(context);
         if (!signature.validate(context)) {
             return false;

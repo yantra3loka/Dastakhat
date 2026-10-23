@@ -66,6 +66,9 @@ class EnvelopeApiIntegrationTest {
     @Autowired
     private jakarta.persistence.EntityManager entityManager;
 
+    @Autowired
+    private com.dastakhat.common.RateLimiter rateLimiter;
+
     private final ObjectMapper mapper = new ObjectMapper();
 
     @BeforeAll
@@ -75,6 +78,8 @@ class EnvelopeApiIntegrationTest {
 
     @BeforeEach
     void reset() throws Exception {
+        // The tests log in more often than a human would: the counters have to start empty.
+        rateLimiter.reset();
         // A clean database for every test. The envelopes cascade to their children.
         // The append only trigger of the audit table has to be lifted for the clean up - the
         // same mechanism that is used to demonstrate the tampering detection.

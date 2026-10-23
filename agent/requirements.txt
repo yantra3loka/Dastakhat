@@ -1,0 +1,12 @@
+# The runtime dependencies of the local DSC signing agent.
+#
+# The HTTP layer (http.server + ssl) and the whole request handling only use
+# the Python standard library, there is no web framework in between.
+#
+#   cryptography  - the self signed TLS certificate and the X.509 helpers
+#   python-pkcs11 - the PKCS#11 binding of the token (JDK 21 removed SunPKCS11)
+#
+# pytest is only needed to run the test suite:  py -m pytest
+cryptography>=42.0.0
+python-pkcs11>=0.7.0
+pytest>=8.0.0

@@ -1,0 +1,26 @@
+server:
+  port: ${MOCK_ESP_PORT:9100}
+  error:
+    include-message: never
+
+spring:
+  application:
+    name: dastakhat-mock-esp
+  main:
+    banner-mode: off
+
+mock-esp:
+  keystore: ${MOCK_ESP_KEYSTORE:../devpki/out/mock-esp.p12}
+  keystore-password: ${MOCK_ESP_KEYSTORE_PASSWORD:changeit}
+  # The MOCK CA key issues the one time certificates of the "users".
+  ca-keystore: ${MOCK_ESP_CA_KEYSTORE:../devpki/out/mock-ca.p12}
+  ca-keystore-password: ${MOCK_ESP_CA_KEYSTORE_PASSWORD:changeit}
+  ca-certificate: ${MOCK_ESP_CA:../devpki/out/mock-ca.pem}
+  test-otp: ${MOCK_ESP_TEST_OTP:123456}
+  request-expiry: 10m
+  allowed-origins: ${MOCK_ESP_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
+
+logging:
+  level:
+    root: INFO
+    com.dastakhat: INFO

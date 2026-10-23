@@ -1,0 +1,17 @@
+# The state of the local DSC signing agent.
+#
+# The TLS key, the generated certificate and the mock key are never committed.
+state/
+.state/
+.tls/
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

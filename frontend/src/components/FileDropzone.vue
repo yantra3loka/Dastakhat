@@ -22,6 +22,9 @@ const emit = defineEmits<{ files: [files: File[]] }>()
 const dragging = ref(false)
 const input = ref<HTMLInputElement | null>(null)
 
+/** True when the last picked file does not match the accepted types. */
+const rejected = ref(false)
+
 const acceptList = computed(() =>
   props.accept
     .split(',')
@@ -40,8 +43,10 @@ function isAccepted(file: File): boolean {
 
 function emitFiles(files: FileList | null): void {
   if (!files || files.length === 0) return
-  const list = Array.from(files).filter(isAccepted)
-  if (list.length === 0) return
+  // Every picked file is handed over to the parent. The parent shows a clear message when
+  // the file is not a PDF - the server validates the real content in any case.
+  const list = Array.from(files)
+  rejected.value = list.some((file) => !isAccepted(file))
   emit('files', list)
 }
 
@@ -66,7 +71,7 @@ function openPicker(): void {
 <template>
   <div
     class="dropzone"
-    :class="{ 'dropzone-active': dragging, 'dropzone-disabled': disabled }"
+    :class="{ 'dropzone-active': dragging, 'dropzone-disabled': disabled, 'dropzone-rejected': rejected }"
     role="button"
     tabindex="0"
     :aria-disabled="disabled ? 'true' : undefined"
@@ -133,6 +138,11 @@ function openPicker(): void {
   cursor: not-allowed;
 }
 
+.dropzone-rejected {
+  border-color: #ef4444;
+  background: #fef2f2;
+}
+
 .dropzone-input {
   position: absolute;
   width: 1px;
@@ -174,3 +184,4 @@ function openPicker(): void {
   color: var(--blue-600);
 }
 </style>
+
