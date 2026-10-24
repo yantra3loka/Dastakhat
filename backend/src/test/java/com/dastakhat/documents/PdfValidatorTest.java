@@ -9,6 +9,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -85,6 +86,74 @@ class PdfValidatorTest {
         assertTrue(message.contains("embedded-file"), message);
         assertTrue(message.contains("associated-files"), message);
         assertTrue(message.contains("secret-plan.txt"), "the message names the attachment: " + message);
+    }
+
+    /** Regression: the C2PA "Content Credentials" manifest of the bug report is metadata. */
+    @Test
+    void aContentCredentialsManifestIsAccepted() {
+        PdfValidator.Inspection inspection = validator.validate(TestDocuments.c2paCredentialsPdf());
+        assertEquals(1, inspection.pages());
+        assertEquals(64, inspection.sha256().length());
+        assertTrue(inspection.findings().isEmpty(), "no finding for provenance metadata");
+    }
+
+    /** The exception is narrow: a real attachment next to the manifest is still rejected. */
+    @Test
+    void aRealAttachmentNextToAContentCredentialsManifestIsStillRejected() {
+        UnprocessableException exception = assertThrows(UnprocessableException.class,
+                () -> validator.validate(TestDocuments.c2paPlusAttachmentPdf()));
+        String message = exception.getMessage().toLowerCase();
+        assertTrue(message.contains("invoice-data.zip"), "the message names the attachment: " + message);
+        assertFalse(message.contains("content credentials"), "the manifest is not reported: " + message);
+    }
+
+    @Test
+    void aLargerMultiPagePdfIsAccepted() {
+        PdfValidator.Inspection inspection = validator.validate(TestDocuments.multiPagePdf(24));
+        assertEquals(24, inspection.pages());
+        assertTrue(inspection.findings().isEmpty());
+    }
+
+    @Test
+    void aPdfWithLegitimateMetadataIsAccepted() {
+        PdfValidator.Inspection inspection = validator.validate(TestDocuments.metadataPdf());
+        assertEquals(1, inspection.pages());
+        assertTrue(inspection.findings().isEmpty());
+    }
+
+    /** A genuinely large (about 6 MB) valid document has to pass the validation. */
+    @Test
+    void aLargeValidPdfIsAccepted() {
+        PdfValidator.Inspection inspection = validator.validate(TestDocuments.largePdf(6L * 1024 * 1024));
+        assertEquals(1, inspection.pages());
+        assertTrue(inspection.sizeBytes() > 5L * 1024 * 1024);
+    }
+
+    @Test
+    void aPdfExactlyAtTheSizeLimitIsAccepted() {
+        byte[] document = TestDocuments.largePdf(2L * 1024 * 1024);
+        properties.setMaxUploadBytes(document.length);
+        assertEquals(document.length, validator.validate(document).sizeBytes());
+    }
+
+    @Test
+    void aFileBeyondTheSizeLimitIsRejected() {
+        byte[] document = TestDocuments.largePdf(2L * 1024 * 1024);
+        properties.setMaxUploadBytes(document.length - 1);
+        assertThrows(PayloadTooLargeException.class, () -> validator.validate(document));
+    }
+
+    @Test
+    void aPdfWithExactlyThePageLimitIsAccepted() {
+        PdfValidator.Inspection inspection = validator.validate(TestDocuments.multiPagePdf(50));
+        assertEquals(50, inspection.pages());
+    }
+
+    @Test
+    void aPdfBeyondThePageLimitIsRejected() {
+        UnprocessableException exception = assertThrows(UnprocessableException.class,
+                () -> validator.validate(TestDocuments.multiPagePdf(51)));
+        assertTrue(exception.getMessage().contains("pages"));
     }
 
     @Test

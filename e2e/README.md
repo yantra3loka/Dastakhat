@@ -63,14 +63,16 @@ signs in again.
 | `login.spec.ts` | A | form, development hint, wrong password error, successful sign in, protected pages |
 | `dashboard.spec.ts` | A, B | dashboard elements, main navigation, logout, re-authentication |
 | `documents.spec.ts` | B, C | document list, status filter, upload form, non-PDF rejection |
-| `upload-validation.spec.ts` | C | valid PDF, 10 MB limit (413), JavaScript (422), Launch (422), embedded attachment (422) |
+| `upload-validation.spec.ts` | C | valid PDF, 10 MB limit (413), JavaScript (422), Launch (422), genuine embedded attachment (422), C2PA Content Credentials manifest (accepted) |
 | `full-flow.spec.ts` | D | upload → recipient → field → send → sign via Mailpit link → sealed PDF → audit chain verification |
 | `esign-mock.spec.ts` | D | signing with the MOCK Aadhaar eSign provider (skips itself when `mock-esp` is not running) |
 | `signer.spec.ts` | E | friendly errors for unknown sign / download tokens |
 | `errors.spec.ts` | E | 404 page, clean console, no 5xx answers, loading state of the signing page |
 
 Fixtures (`e2e/fixtures/`): `offer-letter.pdf` (valid), plus the hand written
-`javascript.pdf`, `launch-action.pdf` and `embedded-attachment.pdf` used to
-prove the backend rejects active content. The oversized file for the 10 MB
+`javascript.pdf`, `launch-action.pdf` and `embedded-attachment.pdf` (embedded
+`tool.exe`) used to prove the backend rejects active content, and
+`c2pa-credentials.pdf` (the C2PA "Content Credentials" provenance manifest that
+Acrobat attaches) which has to be **accepted**. The oversized file for the 10 MB
 test is generated at runtime in the spec. PDF security checks are **not**
 relaxed anywhere for these tests.

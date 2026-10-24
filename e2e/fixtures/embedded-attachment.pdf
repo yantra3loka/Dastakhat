@@ -1,7 +1,7 @@
 %PDF-1.4
-% e2e fixture - PDF with an embedded file attachment
+% e2e fixture - PDF with an embedded tool.exe attachment
 1 0 obj
-<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles << /Names [(Content Credentials) 5 0 R] >> >> >>
+<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles << /Names [(tool.exe) 5 0 R] >> >> /AF [5 0 R] >>
 endobj
 2 0 obj
 << /Type /Pages /Kids [3 0 R] /Count 1 >>
@@ -10,25 +10,25 @@ endobj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << >> >>
 endobj
 5 0 obj
-<< /Type /Filespec /F (Content Credentials) /UF (Content Credentials) /EF << /F 6 0 R >> >>
+<< /Type /Filespec /F (tool.exe) /UF (tool.exe) /EF << /F 6 0 R >> >>
 endobj
 6 0 obj
-<< /Type /EmbeddedFile /Length 44 >>
+<< /Type /EmbeddedFile /Length 57 >>
 stream
-Content Credentials - e2e fixture attachment
+e2e fixture - embedded executable payload, never executed
 endstream
 endobj
 xref
 0 7
 0000000000 65535 f 
-0000000062 00000 n 
-0000000182 00000 n 
-0000000239 00000 n 
+0000000066 00000 n 
+0000000187 00000 n 
+0000000244 00000 n 
 0000000000 00000 f 
-0000000327 00000 n 
-0000000434 00000 n 
+0000000332 00000 n 
+0000000417 00000 n 
 trailer
 << /Size 7 /Root 1 0 R >>
 startxref
-548
+544
 %%EOF

@@ -168,6 +168,11 @@ public class PdfValidator {
      * as well.</p>
      *
      * <p>The parser is Apache PDFBox; anything it cannot parse is rejected earlier.</p>
+     *
+     * <p>One documented exception: the C2PA "Content Credentials" provenance manifest that
+     * Acrobat attaches (an associated file named {@code Content Credentials} or {@code *.c2pa})
+     * is metadata, not active content, and is accepted. Every other embedded file is still
+     * rejected with the same message as before.</p>
      */
     private Report findActiveContent(PDDocument document) {
         Report report = new Report();
@@ -214,6 +219,11 @@ public class PdfValidator {
     }
 
     private void walkDictionary(COSDictionary dictionary, Report report, Map<COSBase, Boolean> visited) {
+        // The C2PA "Content Credentials" manifest that Acrobat and other producers attach is
+        // provenance metadata: only its embedded file payload is skipped - every other key of
+        // the file specification is still inspected, so nothing can be hidden next to it.
+        boolean provenanceManifest = isFileSpecification(dictionary) && isContentCredentials(dictionary);
+
         for (COSName key : dictionary.keySet()) {
             String lower = key.getName().toLowerCase(Locale.ROOT);
             COSBase item = dictionary.getItem(key);
@@ -223,14 +233,24 @@ public class PdfValidator {
                     // /EF is only an embedded file when it sits in a file specification. Any other
                     // dictionary (a font or image resource, for example) may use the name freely.
                     case "ef" -> {
-                        if (isFileSpecification(dictionary)) {
+                        if (isFileSpecification(dictionary) && !provenanceManifest) {
                             report.attachment(filespecName(dictionary));
                         }
                     }
-                    case "af" -> report.add("associated-files");
+                    // An /AF that holds nothing but a recognized Content Credentials manifest
+                    // carries no active content - anything else stays forbidden (fail closed).
+                    case "af" -> {
+                        if (!associatedFilesAreOnlyManifests(item)) {
+                            report.add("associated-files");
+                        }
+                    }
                     case "xfa" -> report.add("xfa-form");
                     case "js", "javascript" -> report.add("javascript");
-                    case "embeddedfiles" -> report.add("embedded-attachment");
+                    case "embeddedfiles" -> {
+                        if (!embeddedFilesTreeHoldsOnlyManifests(item)) {
+                            report.add("embedded-attachment");
+                        }
+                    }
                     case "richmediacontent" -> report.add("rich-media");
                     default -> { }
                 }
@@ -249,6 +269,10 @@ public class PdfValidator {
                 if (subtype != null && FORBIDDEN_SUBTYPES.contains(subtype)) {
                     report.add("fileattachment".equals(subtype) ? "file-attachment" : subtype + "-annotation");
                 }
+            }
+            if (provenanceManifest && "ef".equals(lower)) {
+                // The manifest payload itself - not an attachment to report.
+                continue;
             }
             walk(item, report, visited);
         }
@@ -275,6 +299,60 @@ public class PdfValidator {
     private static String filespecName(COSDictionary filespec) {
         String name = asString(filespec, COSName.UF);
         return name != null ? name : asString(filespec, COSName.F);
+    }
+
+    /**
+     * True for the C2PA provenance manifest that Acrobat and other producers embed as an
+     * associated file: {@code Content Credentials} (the Acrobat name, the one the rejected
+     * documents carry) or a {@code *.c2pa} manifest store. The manifest is tamper evident
+     * metadata - it cannot execute code - so it is not active content. Every other embedded
+     * file stays forbidden.
+     */
+    private static boolean isContentCredentials(COSDictionary filespec) {
+        String name = filespecName(filespec);
+        if (name == null) {
+            return false;
+        }
+        String lower = name.trim().toLowerCase(Locale.ROOT);
+        return lower.equals("content credentials") || lower.endsWith(".c2pa");
+    }
+
+    /** True when an {@code /AF} value holds nothing but recognized Content Credentials manifests. */
+    private static boolean associatedFilesAreOnlyManifests(COSBase value) {
+        COSBase unwrapped = value instanceof COSObject object ? object.getObject() : value;
+        if (!(unwrapped instanceof COSArray array)) {
+            return false;
+        }
+        for (COSBase item : array) {
+            COSBase resolved = item instanceof COSObject object ? object.getObject() : item;
+            if (!(resolved instanceof COSDictionary filespec) || !isContentCredentials(filespec)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * True when an {@code /EmbeddedFiles} name tree node holds nothing but such manifests.
+     * A tree that cannot be inspected here (a {@code /Kids} node, for example) fails closed.
+     */
+    private static boolean embeddedFilesTreeHoldsOnlyManifests(COSBase value) {
+        COSBase unwrapped = value instanceof COSObject object ? object.getObject() : value;
+        if (!(unwrapped instanceof COSDictionary node)) {
+            return false;
+        }
+        COSBase names = node.getDictionaryObject(COSName.NAMES);
+        if (!(names instanceof COSArray array)) {
+            return false;
+        }
+        for (int i = 1; i < array.size(); i += 2) { // the tree stores pairs: name, file spec
+            COSBase item = array.get(i);
+            COSBase resolved = item instanceof COSObject object ? object.getObject() : item;
+            if (!(resolved instanceof COSDictionary filespec) || !isContentCredentials(filespec)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** A text entry of a dictionary, unwrapping indirect objects. */

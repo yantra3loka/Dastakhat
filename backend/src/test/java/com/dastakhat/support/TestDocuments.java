@@ -4,6 +4,7 @@ import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.cos.COSArray;
 import org.apache.pdfbox.cos.COSDictionary;
 import org.apache.pdfbox.cos.COSName;
+import org.apache.pdfbox.cos.COSStream;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDDocumentNameDictionary;
 import org.apache.pdfbox.pdmodel.PDEmbeddedFilesNameTreeNode;
@@ -22,7 +23,10 @@ import org.apache.pdfbox.pdmodel.interactive.action.PDActionJavaScript;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -47,6 +51,81 @@ public final class TestDocuments {
         return build(false, false, 1, 0);
     }
 
+    /** A valid document with the given number of pages. */
+    public static byte[] multiPagePdf(int pages) {
+        return build(false, false, pages, 0);
+    }
+
+    /** A one page document with legitimate metadata: an information dictionary and an XMP stream. */
+    public static byte[] metadataPdf() {
+        try (PDDocument document = new PDDocument()) {
+            PDPage page = new PDPage(PDRectangle.A4);
+            document.addPage(page);
+            try (PDPageContentStream stream = new PDPageContentStream(document, page)) {
+                stream.beginText();
+                stream.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA), 18);
+                stream.newLineAtOffset(60, 700);
+                stream.showText("Dastakhat test document with XMP metadata");
+                stream.endText();
+            }
+            document.getDocumentInformation().setTitle("Offer letter");
+            document.getDocumentInformation().setAuthor("Dastakhat test");
+            document.getDocumentInformation().setProducer("Dastakhat tests");
+            String xmp = """
+                    <?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
+                    <x:xmpmeta xmlns:x="adobe:ns:meta/">
+                      <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+                        <rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/">
+                          <dc:title><rdf:Alt><rdf:li xml:lang="x-default">Offer letter</rdf:li></rdf:Alt></dc:title>
+                        </rdf:Description>
+                      </rdf:RDF>
+                    </x:xmpmeta>
+                    <?xpacket end="w"?>""";
+            COSStream xmpStream = document.getDocument().createCOSStream();
+            try (OutputStream os = xmpStream.createOutputStream()) {
+                os.write(xmp.getBytes(StandardCharsets.UTF_8));
+            }
+            xmpStream.setName(COSName.SUBTYPE, "XML");
+            document.getDocumentCatalog().getCOSObject().setItem(COSName.METADATA, xmpStream);
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            document.save(output);
+            return output.toByteArray();
+        } catch (IOException e) {
+            throw new IllegalStateException("Cannot build the test document", e);
+        }
+    }
+
+    /**
+     * A valid document padded with an uncompressed stream: the file really is about
+     * {@code approxBytes} large, which exercises the size limit and the memory path.
+     */
+    public static byte[] largePdf(long approxBytes) {
+        try (PDDocument document = new PDDocument()) {
+            PDPage page = new PDPage(PDRectangle.A4);
+            document.addPage(page);
+            try (PDPageContentStream stream = new PDPageContentStream(document, page)) {
+                stream.beginText();
+                stream.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA), 18);
+                stream.newLineAtOffset(60, 700);
+                stream.showText("Dastakhat large test document");
+                stream.endText();
+            }
+            byte[] filler = new byte[(int) Math.max(0, approxBytes - 4096)];
+            Arrays.fill(filler, (byte) ' ');
+            COSStream padding = document.getDocument().createCOSStream();
+            try (OutputStream os = padding.createOutputStream()) {
+                os.write(filler); // no /Filter on purpose - the file really has to be big
+            }
+            document.getDocumentCatalog().getCOSObject()
+                    .setItem(COSName.getPDFName("DastakhatTestPadding"), padding);
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            document.save(output);
+            return output.toByteArray();
+        } catch (IOException e) {
+            throw new IllegalStateException("Cannot build the test document", e);
+        }
+    }
+
     /** A document with a JavaScript action in the open action of the catalogue. */
     public static byte[] javascriptPdf() {
         return build(true, false, 1, 0);
@@ -58,11 +137,38 @@ public final class TestDocuments {
     }
 
     /**
-     * A one page document that carries an embedded attachment in the {@code /Names /EmbeddedFiles}
-     * name tree and in the catalogue {@code /AF} array - the same shape as the C2PA "Content
-     * Credentials" manifests that PDF producers attach to otherwise text-only documents.
+     * A one page document that carries a real embedded attachment: the {@code /Names
+     * /EmbeddedFiles} name tree plus the catalogue {@code /AF} array, the shape PDF producers
+     * use for attachments. The attachment is ordinary content and has to be rejected.
      */
     public static byte[] embeddedFilePdf() {
+        return attachmentPdf(Map.of("secret-plan.txt", "secret payload".getBytes(StandardCharsets.UTF_8)));
+    }
+
+    /**
+     * The document of the bug report: a PDF that carries the C2PA "Content Credentials"
+     * provenance manifest which Adobe Acrobat attaches to otherwise text-only documents.
+     * The manifest is metadata and has to be accepted.
+     */
+    public static byte[] c2paCredentialsPdf() {
+        return attachmentPdf(Map.of("Content Credentials", c2paManifestBytes()));
+    }
+
+    /** A Content Credentials manifest next to a real attachment - only the attachment counts. */
+    public static byte[] c2paPlusAttachmentPdf() {
+        Map<String, byte[]> attachments = new LinkedHashMap<>();
+        attachments.put("Content Credentials", c2paManifestBytes());
+        attachments.put("invoice-data.zip", "PK zip-like payload".getBytes(StandardCharsets.UTF_8));
+        return attachmentPdf(attachments);
+    }
+
+    /** A small JUMBF-like blob, the shape of a real C2PA manifest store. */
+    private static byte[] c2paManifestBytes() {
+        return "jumb    c2pa manifest store (test)".getBytes(StandardCharsets.ISO_8859_1);
+    }
+
+    /** A document with the given embedded attachments (name tree and catalogue /AF). */
+    private static byte[] attachmentPdf(Map<String, byte[]> attachments) {
         try (PDDocument document = new PDDocument()) {
             PDPage page = new PDPage(PDRectangle.A4);
             document.addPage(page);
@@ -70,18 +176,24 @@ public final class TestDocuments {
                 stream.beginText();
                 stream.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA), 18);
                 stream.newLineAtOffset(60, 700);
-                stream.showText("Dastakhat test document with an attachment");
+                stream.showText("Dastakhat test document with attachments");
                 stream.endText();
             }
-            PDEmbeddedFile embedded = new PDEmbeddedFile(document,
-                    new ByteArrayInputStream("secret payload".getBytes(StandardCharsets.UTF_8)));
-            PDComplexFileSpecification filespec = new PDComplexFileSpecification();
-            filespec.setFile("secret-plan.txt");
-            filespec.setFileUnicode("secret-plan.txt");
-            filespec.setEmbeddedFile(embedded);
+            Map<String, PDComplexFileSpecification> entries = new LinkedHashMap<>();
+            COSArray associatedFiles = new COSArray();
+            for (Map.Entry<String, byte[]> attachment : attachments.entrySet()) {
+                PDEmbeddedFile embedded = new PDEmbeddedFile(document,
+                        new ByteArrayInputStream(attachment.getValue()));
+                PDComplexFileSpecification filespec = new PDComplexFileSpecification();
+                filespec.setFile(attachment.getKey());
+                filespec.setFileUnicode(attachment.getKey());
+                filespec.setEmbeddedFile(embedded);
+                entries.put(attachment.getKey(), filespec);
+                associatedFiles.add(filespec.getCOSObject());
+            }
 
             PDEmbeddedFilesNameTreeNode tree = new PDEmbeddedFilesNameTreeNode();
-            tree.setNames(Map.of("secret-plan.txt", filespec));
+            tree.setNames(entries);
             if (document.getDocumentCatalog().getNames() == null) {
                 document.getDocumentCatalog().setNames(new PDDocumentNameDictionary(document.getDocumentCatalog()));
             }
@@ -89,8 +201,6 @@ public final class TestDocuments {
 
             // PDF 2.0 associated files, like the /AF entry of the reported document.
             COSDictionary catalog = document.getDocumentCatalog().getCOSObject();
-            COSArray associatedFiles = new COSArray();
-            associatedFiles.add(filespec.getCOSObject());
             catalog.setItem(COSName.getPDFName("AF"), associatedFiles);
 
             ByteArrayOutputStream output = new ByteArrayOutputStream();

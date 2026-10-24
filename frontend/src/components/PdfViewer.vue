@@ -68,6 +68,9 @@ async function load(): Promise<void> {
     if (token !== renderToken) return
     pageCount.value = documentProxy.numPages
     emit('loaded', pageCount.value)
+    // The page canvases only exist in the DOM once the loading state is over - rendering
+    // before that finds no canvas and would silently leave every page blank.
+    loading.value = false
     await nextTick()
     await renderAll(token)
   } catch (cause) {
@@ -95,6 +98,9 @@ async function renderAll(token: number): Promise<void> {
 
 async function renderPage(page: number, token: number): Promise<void> {
   if (!documentProxy) return
+  // A re-render (zoom, resize) can start while Vue is still patching the DOM - wait for the
+  // update so the canvas of this page is guaranteed to exist before it is looked up.
+  await nextTick()
   const canvas = canvases.get(page)
   if (!canvas) return
   // A render that is still running has to be cancelled, otherwise pdf.js refuses to render
@@ -183,6 +189,9 @@ watch(
 
 onMounted(async () => {
   await load()
+  // The container is rendered with the pages - make sure it exists before it is measured
+  // and observed, so the viewer re-renders on later width changes.
+  await nextTick()
   lastRenderedWidth = containerWidth()
   if (typeof ResizeObserver !== 'undefined' && container.value) {
     resizeObserver = new ResizeObserver(() => {
